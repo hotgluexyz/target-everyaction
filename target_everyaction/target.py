@@ -13,8 +13,8 @@ class TargetEveryAction(TargetHotglue):
     SINK_TYPES = [ContactsSink]
 
     config_jsonschema = th.PropertiesList(
-        th.Property("username", th.StringType, required=True),
-        th.Property("password", th.StringType, required=True),
+        th.Property("app_name", th.StringType, required=True),
+        th.Property("api_key", th.StringType, required=True),
     ).to_dict()
 
 

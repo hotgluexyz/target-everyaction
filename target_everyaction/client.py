@@ -18,7 +18,7 @@ class EveryActionSink(HotglueSink):
         key_properties: Optional[List[str]],
     ) -> None:
         super().__init__(target, stream_name, schema, key_properties)
-        self.__auth = EveryActionAuth(self.config["username"], self.config["password"])
+        self.__auth = EveryActionAuth(self.config["app_name"], self.config["api_key"])
 
     @property
     def base_url(self):

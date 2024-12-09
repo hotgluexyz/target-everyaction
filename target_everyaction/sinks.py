@@ -27,8 +27,6 @@ class ContactsSink(EveryActionSink):
             payload["emails"] = [
                 {
                     "email": record["email"],
-                    "type": "P",
-                    "isPreferred": True,
                 }
             ]
 
@@ -43,8 +41,6 @@ class ContactsSink(EveryActionSink):
                     "stateOrProvince": address.get("state"),
                     "zipOrPostalCode": address.get("postal_code"),
                     "countryCode": address.get("country"),
-                    "type": "Voting",
-                    "isPreferred": True,
                 }
                 payload["addresses"].append(address_dict)
 
@@ -53,8 +49,7 @@ class ContactsSink(EveryActionSink):
             for phone in record["phone_numbers"]:
                 phone_dict = {
                     "phoneNumber": phone.get("number"),
-                    "phoneType": phone.get("type", "H"),
-                    "isPreferred": True,
+                    "phoneType": phone.get("type"),
                 }
                 payload["phones"].append(phone_dict)
 
