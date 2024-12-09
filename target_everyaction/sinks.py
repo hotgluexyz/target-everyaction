@@ -18,7 +18,7 @@ class ContactsSink(EveryActionSink):
             "lastName": record.get("last_name"),
             "middleName": record.get("middle_name"),
             "jobTitle": record.get("title"),
-            "website": "record.get("website"),
+            "website": record.get("website"),
             "salutation": record.get("salutation"),
             "dateOfBirth": record.get("birthdate"),
             "occupation": record.get("occupation"),
