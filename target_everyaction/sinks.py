@@ -17,16 +17,10 @@ class ContactsSink(EveryActionSink):
             "firstName": record.get("first_name"),
             "lastName": record.get("last_name"),
             "middleName": record.get("middle_name"),
-            "suffix": record.get("suffix"),
             "title": record.get("title"),
             "salutation": record.get("salutation"),
-            "nickname": record.get("nickname"),
-            "dateOfBirth": record.get("date_of_birth"),
-            "sex": record.get("sex"),
-            "employer": record.get("employer"),
+            "dateOfBirth": record.get("birthdate"),
             "occupation": record.get("occupation"),
-            "jobTitle": record.get("job_title"),
-            "party": record.get("party"),
         }
 
         if "email" in record:
