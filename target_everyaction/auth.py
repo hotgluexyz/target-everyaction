@@ -5,6 +5,10 @@ import requests
 class EveryActionAuth(requests.auth.AuthBase):
     def __init__(self, username, password):
         self.username = username
+
+        if not password.endswith("|0") and not password.endswith("|1"):
+            password += "|0"
+
         self.password = password
 
     def __call__(self, r):
