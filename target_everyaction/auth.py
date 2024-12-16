@@ -7,7 +7,7 @@ class EveryActionAuth(requests.auth.AuthBase):
         self.username = username
 
         if not password.endswith("|0") and not password.endswith("|1"):
-            password += "|0"
+            password += "|1"
 
         self.password = password
 
