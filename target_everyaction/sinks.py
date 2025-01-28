@@ -1,5 +1,6 @@
 """EveryAction target sink class, which handles writing streams."""
 
+from typing import Optional
 from target_everyaction.client import EveryActionSink
 import singer
 
