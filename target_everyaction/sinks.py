@@ -101,6 +101,61 @@ class ContactsSink(EveryActionSink):
                                   request_data=code_payload)
         return response.json() if response.ok else None
 
+    def _get_all_activist_codes(self) -> dict:
+        """Get all activist codes and cache them in memory."""
+        all_codes = {}
+        params = {
+            "statuses": "Active,Archived",
+            "$top": 200
+        }
+        
+        response = self.request_api("GET", endpoint="activistCodes", params=params)
+        while True:
+            if response.ok:
+                data = response.json()
+                # Store codes with lowercase names for case-insensitive lookup
+                for item in data["items"]:
+                    all_codes[item["name"].lower()] = item["activistCodeId"]
+                    
+                if "nextPageLink" not in data:
+                    break
+                    
+                next_page = data["nextPageLink"].split("?")[1]
+                response = self.request_api("GET", endpoint=f"activistCodes?{next_page}")
+            else:
+                break
+        
+        return all_codes
+
+    def _process_activist_codes(self, person_id: int, code_names: list, cached_codes: dict):
+        """Process activist codes for a person."""
+        missing_codes = []
+        
+        # Build payload for existing codes
+        responses = []
+        for code_name in code_names:
+            code_id = cached_codes.get(code_name.lower())
+            if code_id:
+                responses.append({
+                    "activistCodeId": code_id,
+                    "action": "Apply",
+                    "type": "ActivistCode"
+                })
+            else:
+                missing_codes.append(code_name)
+                LOGGER.warning(f"Activist code '{code_name}' not found")
+        
+        # Apply existing codes in a single request if any exist
+        if responses:
+            payload = {"responses": responses}
+            self.request_api(
+                "POST",
+                endpoint=f"people/{person_id}/canvassResponses",
+                request_data=payload
+            )
+        
+        return missing_codes
+
     def upsert_record(self, record: dict, context: dict):
         method = "POST"
         state_dict = dict()
@@ -113,16 +168,14 @@ class ContactsSink(EveryActionSink):
             if hasattr(self, "pending_codes"):
                 # Activist codes
                 if self.pending_codes.get("activist"):
-                    for code in self.pending_codes["activist"]:
-                        payload = {
-                            "responses": [{
-                                "activistCodeId": code,
-                                "action": "Apply",
-                                "type": "ActivistCode"
-                            }]
-                        }
-                        self.request_api("POST", endpoint=f"people/{id}/canvassResponses", 
-                                       request_data=payload)
+                    # Get all activist codes once
+                    cached_codes = self._get_all_activist_codes()
+                    # Process all codes for this person
+                    missing_codes = self._process_activist_codes(
+                        id, 
+                        self.pending_codes["activist"],
+                        cached_codes
+                    )
 
                 # Handle both Source Codes and Tags
                 for code_type, codes in self.pending_codes.items():
