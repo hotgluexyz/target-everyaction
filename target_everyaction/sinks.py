@@ -117,9 +117,11 @@ class ContactsSink(EveryActionSink):
                 for item in data["items"]:
                     all_codes[item["name"].lower()] = item["activistCodeId"]
                     
-                if "nextPageLink" not in data:
+                # Check if there are more pages
+                if not data.get("nextPageLink"):
                     break
                     
+                # Extract next page URL and make request
                 next_page = data["nextPageLink"].split("?")[1]
                 response = self.request_api("GET", endpoint=f"activistCodes?{next_page}")
             else:
