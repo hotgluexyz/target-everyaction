@@ -83,10 +83,11 @@ class ContactsSink(EveryActionSink):
                     item["name"].lower(): item["codeId"] 
                     for item in data["items"]
                 })
-                if "nextPageLink" not in data:
+                if "nextPageLink" in data and data["nextPageLink"]:
+                    response = self.request_api("GET", 
+                                              endpoint=f"codes?{data['nextPageLink'].split('?')[1]}")
+                else:
                     break
-                response = self.request_api("GET", 
-                                          endpoint=f"codes?{data['nextPageLink'].split('?')[1]}")
             else:
                 break
 
@@ -117,13 +118,12 @@ class ContactsSink(EveryActionSink):
                 for item in data["items"]:
                     all_codes[item["name"].lower()] = item["activistCodeId"]
                     
-                # Check if there are more pages
-                if not data.get("nextPageLink"):
-                    break
-                    
                 # Extract next page URL and make request
-                next_page = data["nextPageLink"].split("?")[1]
-                response = self.request_api("GET", endpoint=f"activistCodes?{next_page}")
+                if "nextPageLink" in data and data["nextPageLink"]:
+                    next_page = data["nextPageLink"].split("?")[1]
+                    response = self.request_api("GET", endpoint=f"activistCodes?{next_page}")
+                else:
+                    break
             else:
                 break
         
