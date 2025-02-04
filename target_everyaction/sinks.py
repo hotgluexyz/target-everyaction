@@ -146,7 +146,8 @@ class ContactsSink(EveryActionSink):
             else:
                 missing_codes.append(code_name)
                 LOGGER.warning(f"Activist code '{code_name}' not found")
-        
+        LOGGER.info(f"Missing activist codes: {missing_codes}")
+        LOGGER.info("Activist codes to apply: %s", responses)
         # Apply existing codes in a single request if any exist
         if responses:
             payload = {"responses": responses}

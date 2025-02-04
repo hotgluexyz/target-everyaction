@@ -42,6 +42,7 @@ class EveryActionSink(HotglueSink):
     def request_api(self, method, endpoint, request_data=None, params=None):
         url = f"{self.base_url}{endpoint}"
         LOGGER.info(self.__auth)
+        LOGGER.info(f"API Request: {method} {url} {request_data} {params}")
         response = requests.request(
             method,
             url,
