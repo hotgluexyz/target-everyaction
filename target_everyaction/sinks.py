@@ -146,7 +146,8 @@ class ContactsSink(EveryActionSink):
             else:
                 missing_codes.append(code_name)
                 LOGGER.warning(f"Activist code '{code_name}' not found")
-        LOGGER.info(f"Missing activist codes: {missing_codes}")
+        
+        LOGGER.info(f"Could not find activist codes: {missing_codes}")
         LOGGER.info("Activist codes to apply: %s", responses)
         # Apply existing codes in a single request if any exist
         if responses:
@@ -159,13 +160,46 @@ class ContactsSink(EveryActionSink):
         
         return missing_codes
 
+    def _search_existing_contact(self, record: dict, context: dict):
+        
+        if "emails" not in record:
+            return None
+        
+        method = "POST"
+        search_endpoint = "people/find"
+        search_payload = {
+            "emails": record.get("emails", [])
+        }
+
+        # people/find throws 404 if no contact is found
+        response = self.request_api(method, request_data=search_payload, endpoint=search_endpoint, should_validate=False)
+
+        
+        if response.status_code == 200:
+            return response.json().get("vanId")
+        else:
+            return None
+        
+        
+
     def upsert_record(self, record: dict, context: dict):
         method = "POST"
         state_dict = dict()
 
+        existing_van_id = self._search_existing_contact(record, context)
+       
+        if existing_van_id:
+            record["vanId"] = existing_van_id
+
+
         response = self.request_api(method, request_data=record, endpoint=self.endpoint)
         if response.status_code in [200, 201]:
             state_dict["success"] = True
+            if existing_van_id:
+                state_dict["is_updated"] = True
+
+
+
             id = response.json().get("vanId")
 
             if hasattr(self, "pending_codes"):
