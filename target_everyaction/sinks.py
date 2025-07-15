@@ -3,6 +3,7 @@
 from typing import Optional
 from target_everyaction.client import EveryActionSink
 import singer
+from urllib.parse import urlencode
 
 LOGGER = singer.get_logger()
 
@@ -51,7 +52,7 @@ class ContactsSink(EveryActionSink):
             for phone in record["phone_numbers"]:
                 phone_dict = {
                     "phoneNumber": phone.get("number"),
-                    "phoneType": phone.get("type"),
+                    "phoneType": phone.get("type") if phone.get("type") in ["H", "W", "O"] else None,
                 }
                 payload["phones"].append(phone_dict)
 
@@ -68,9 +69,193 @@ class ContactsSink(EveryActionSink):
 
         return payload
 
-    def preprocess_record(self, record: dict, context: dict) -> dict:
-        return self.map_fields(record)
+    def is_empty_value(self, value) -> bool:
+        """Determine if a value should be considered "empty" for upsert purposes."""
+        if value is None:
+            return True
+        if isinstance(value, str) and value.strip() == "":
+            return True
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return True
+        return False
 
+    def _merge_list_by_key(self, existing_items: list, new_items: list, key_field: str, key_transform=None) -> list:
+        """Generic function to merge lists by a specific key field."""
+        if not existing_items:
+            return new_items
+        
+        if not new_items:
+            return existing_items
+        
+        existing_map = {}
+        for item in existing_items:
+            if item.get(key_field):
+                key_value = item[key_field]
+                if key_transform:
+                    key_value = key_transform(key_value)
+                existing_map[key_value] = item
+        
+        for new_item in new_items:
+            if new_item.get(key_field):
+                key_value = new_item[key_field]
+                if key_transform:
+                    key_value = key_transform(key_value)
+                if key_value not in existing_map:
+                    existing_map[key_value] = new_item
+                else:
+                    existing = existing_map[key_value]
+                    existing.update(new_item)
+        
+        return list(existing_map.values())
+
+
+    def _merge_list_values(self, existing_value: list, new_value: list, field_name: str = None) -> list:
+        """Merge list values with field-specific logic."""
+        if field_name == "emails":
+            return self._merge_list_by_key(existing_value, new_value, "email", str.lower)
+        elif field_name == "addresses":
+            return self._merge_list_by_key(existing_value, new_value, "addressId")
+        elif field_name == "phones":
+            return self._merge_list_by_key(existing_value, new_value, "phoneNumber")
+        elif field_name == "customFields":
+            return self._merge_list_by_key(existing_value, new_value, "customFieldId")
+        else:
+            return new_value if self.is_empty_value(existing_value) else existing_value
+
+    def _merge_dict_values(self, existing_value: dict, new_value: dict) -> dict:
+        """Recursively merge two dictionary values."""
+        return self.merge_filling_empty_fields(existing_value, new_value)
+
+    def _merge_scalar_values(self, existing_value, new_value):
+        """Merge scalar values, preferring new value if existing is empty."""
+        return new_value if self.is_empty_value(existing_value) else existing_value
+
+    def merge_filling_empty_fields(self, existing_member: dict, incoming_member: dict) -> dict:
+        """Merge incoming member data with existing member, filling empty fields."""
+        if not isinstance(existing_member, dict) or not isinstance(incoming_member, dict):
+            return incoming_member if self.is_empty_value(existing_member) else existing_member
+
+        merged_member = existing_member.copy()
+
+        for key, new_value in incoming_member.items():
+            if key not in merged_member:
+                merged_member[key] = new_value
+                continue
+
+            existing_value = merged_member[key]
+            
+            if isinstance(existing_value, dict) and isinstance(new_value, dict):
+                merged_member[key] = self._merge_dict_values(existing_value, new_value)
+            elif isinstance(existing_value, list) and isinstance(new_value, list):
+                merged_member[key] = self._merge_list_values(existing_value, new_value, key)
+            else:
+                merged_member[key] = self._merge_scalar_values(existing_value, new_value)
+
+        return merged_member
+
+    def find_by_van_id(self, van_id: str) -> Optional[dict]:
+        """Find a person record by their VAN ID."""
+        params = {
+            "$expand": "phones,emails,addresses,customFields,externalIds,recordedAddresses,preferences,suppressions,reportedDemographics,disclosureFieldValues"
+        }
+        endpoint = f"people/{van_id}?{urlencode(params)}"
+
+        response = self.request_api(
+            method="GET", 
+            request_data=None, 
+            endpoint=endpoint,
+        )
+        return response.json() if response.ok else None
+
+    def find_by_email(self, email: str) -> Optional[dict]:
+        """Find a person record by their email address."""
+        response = self.request_api(
+            method="POST", 
+            request_data={"emails": [{"email": email}]}, 
+            endpoint="people/find"
+        )
+        return response.json() if response.ok else None
+
+    def _get_existing_record_by_van_id(self, van_id: str) -> Optional[dict]:
+        """Get existing record using VAN ID."""
+        response = self.find_by_van_id(van_id)
+        if response is None:
+            LOGGER.warning(f"Failed to fetch existing record for van_id {van_id}")
+        return response
+
+    def _get_existing_record_by_email(self, email: str) -> Optional[dict]:
+        """Get existing record using email address."""
+        email_response = self.find_by_email(email)
+        if email_response is None:
+            LOGGER.warning(f"Failed to fetch existing record for email {email}")
+            return None
+
+        van_id = email_response.get("vanId")
+        if not van_id:
+            LOGGER.warning(f"No VAN ID found in email response for {email}")
+            return None
+
+        return self._get_existing_record_by_van_id(van_id)
+    
+    def _remove_unnecessary_fields(self, record: dict) -> dict:
+        """Remove unnecessary fields from the record."""
+        if "emails" in record:
+            record["emails"] = [
+                {
+                    "email": email.get("email"),
+                }
+                for email in record["emails"]
+            ]
+            
+        if "phones" in record:
+            record["phones"] = [
+                {
+                    "phoneNumber": phone.get("phoneNumber"),
+                    "phoneType": phone.get("phoneType") if phone.get("phoneType") in ["H", "W", "O"] else None,
+                }
+                for phone in record["phones"]
+            ]
+        return record
+
+    def merge_with_existing_people(self, record: dict) -> dict:
+        """Merge incoming record with existing person data if found."""
+        van_id = record.get("vanId")
+        email = record.get("emails", [])[0].get("email") if record.get("emails") else None
+        
+        if not email and not van_id:
+            LOGGER.debug("No email or van_id found in record, skipping merge logic")
+            return record
+
+        try:
+            existing_record = None
+            
+            if van_id:
+                existing_record = self._get_existing_record_by_van_id(van_id)
+            else:
+                existing_record = self._get_existing_record_by_email(email)
+
+            if existing_record is None:
+                LOGGER.debug("No existing record found, using incoming record as-is")
+                return record
+
+            merged_record = self.merge_filling_empty_fields(existing_record, record)
+            merged_record = self._remove_unnecessary_fields(merged_record)
+            LOGGER.debug(f"Successfully merged record with existing data")
+            return merged_record
+
+        except Exception as e:
+            LOGGER.error(f"Error during record preprocessing for email {email}: {str(e)}")
+            return record
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        record = self.map_fields(record)
+        
+        if self.config.get("only_upsert_empty_fields", False):
+            return self.merge_with_existing_people(record)
+        
+        return record
+    
+    
     def _get_or_create_code(self, code_payload: dict) -> Optional[str]:
         """Get existing code ID or create new code."""
         # Get existing codes
