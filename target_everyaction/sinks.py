@@ -69,94 +69,11 @@ class ContactsSink(EveryActionSink):
 
         return payload
 
-    def is_empty_value(self, value) -> bool:
-        """Determine if a value should be considered "empty" for upsert purposes."""
-        if value is None:
-            return True
-        if isinstance(value, str) and value.strip() == "":
-            return True
-        if isinstance(value, (list, dict)) and len(value) == 0:
-            return True
-        return False
-
-    def _merge_list_by_key(self, existing_items: list, new_items: list, key_field: str, key_transform=None) -> list:
-        """Generic function to merge lists by a specific key field."""
-        if not existing_items:
-            return new_items
-        
-        if not new_items:
-            return existing_items
-        
-        existing_map = {}
-        for item in existing_items:
-            if item.get(key_field):
-                key_value = item[key_field]
-                if key_transform:
-                    key_value = key_transform(key_value)
-                existing_map[key_value] = item
-        
-        for new_item in new_items:
-            if new_item.get(key_field):
-                key_value = new_item[key_field]
-                if key_transform:
-                    key_value = key_transform(key_value)
-                if key_value not in existing_map:
-                    existing_map[key_value] = new_item
-                else:
-                    existing = existing_map[key_value]
-                    existing.update(new_item)
-        
-        return list(existing_map.values())
-
-
-    def _merge_list_values(self, existing_value: list, new_value: list, field_name: str = None) -> list:
-        """Merge list values with field-specific logic."""
-        if field_name == "emails":
-            return self._merge_list_by_key(existing_value, new_value, "email", str.lower)
-        elif field_name == "addresses":
-            return self._merge_list_by_key(existing_value, new_value, "addressId")
-        elif field_name == "phones":
-            return self._merge_list_by_key(existing_value, new_value, "phoneNumber")
-        elif field_name == "customFields":
-            return self._merge_list_by_key(existing_value, new_value, "customFieldId")
-        else:
-            return new_value if self.is_empty_value(existing_value) else existing_value
-
-    def _merge_dict_values(self, existing_value: dict, new_value: dict) -> dict:
-        """Recursively merge two dictionary values."""
-        return self.merge_filling_empty_fields(existing_value, new_value)
-
-    def _merge_scalar_values(self, existing_value, new_value):
-        """Merge scalar values, preferring new value if existing is empty."""
-        return new_value if self.is_empty_value(existing_value) else existing_value
-
-    def merge_filling_empty_fields(self, existing_member: dict, incoming_member: dict) -> dict:
-        """Merge incoming member data with existing member, filling empty fields."""
-        if not isinstance(existing_member, dict) or not isinstance(incoming_member, dict):
-            return incoming_member if self.is_empty_value(existing_member) else existing_member
-
-        merged_member = existing_member.copy()
-
-        for key, new_value in incoming_member.items():
-            if key not in merged_member:
-                merged_member[key] = new_value
-                continue
-
-            existing_value = merged_member[key]
-            
-            if isinstance(existing_value, dict) and isinstance(new_value, dict):
-                merged_member[key] = self._merge_dict_values(existing_value, new_value)
-            elif isinstance(existing_value, list) and isinstance(new_value, list):
-                merged_member[key] = self._merge_list_values(existing_value, new_value, key)
-            else:
-                merged_member[key] = self._merge_scalar_values(existing_value, new_value)
-
-        return merged_member
 
     def find_by_van_id(self, van_id: str) -> Optional[dict]:
         """Find a person record by their VAN ID."""
         params = {
-            "$expand": "phones,emails,addresses,customFields,externalIds,recordedAddresses,preferences,suppressions,reportedDemographics,disclosureFieldValues"
+            "$expand": "phones,emails,addresses"
         }
         endpoint = f"people/{van_id}?{urlencode(params)}"
 
@@ -238,7 +155,11 @@ class ContactsSink(EveryActionSink):
                 LOGGER.debug("No existing record found, using incoming record as-is")
                 return record
 
-            merged_record = self.merge_filling_empty_fields(existing_record, record)
+            for key, value in record.items():
+                 existing_value = existing_record.get(key)
+                 if existing_value in [None, "", []]:
+                        existing_record[key] = value
+
             merged_record = self._remove_unnecessary_fields(merged_record)
             LOGGER.debug(f"Successfully merged record with existing data")
             return merged_record
