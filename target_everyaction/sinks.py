@@ -143,30 +143,26 @@ class ContactsSink(EveryActionSink):
             LOGGER.debug("No email or van_id found in record, skipping merge logic")
             return record
 
-        try:
-            existing_record = None
-            
-            if van_id:
-                existing_record = self._get_existing_record_by_van_id(van_id)
-            else:
-                existing_record = self._get_existing_record_by_email(email)
+        existing_record = None
+        
+        if van_id:
+            existing_record = self._get_existing_record_by_van_id(van_id)
+        else:
+            existing_record = self._get_existing_record_by_email(email)
 
-            if existing_record is None:
-                LOGGER.debug("No existing record found, using incoming record as-is")
-                return record
-
-            for key, value in record.items():
-                 existing_value = existing_record.get(key)
-                 if existing_value in [None, "", []]:
-                        existing_record[key] = value
-
-            merged_record = self._remove_unnecessary_fields(merged_record)
-            LOGGER.debug(f"Successfully merged record with existing data")
-            return merged_record
-
-        except Exception as e:
-            LOGGER.error(f"Error during record preprocessing for email {email}: {str(e)}")
+        if existing_record is None:
+            LOGGER.debug("No existing record found, using incoming record as-is")
             return record
+
+        for key, value in record.items():
+                existing_value = existing_record.get(key)
+                if existing_value in [None, "", []]:
+                    existing_record[key] = value
+
+        merged_record = self._remove_unnecessary_fields(existing_record)
+        LOGGER.debug(f"Successfully merged record with existing data")
+        return merged_record
+
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = self.map_fields(record)
