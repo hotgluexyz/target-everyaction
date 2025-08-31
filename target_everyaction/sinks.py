@@ -24,6 +24,7 @@ class ContactsSink(EveryActionSink):
             "salutation": record.get("salutation"),
             "dateOfBirth": record.get("birthdate"),
             "occupation": record.get("occupation"),
+            "vanId": record.get("id"),
         }
 
         if "email" in record:
@@ -70,105 +71,94 @@ class ContactsSink(EveryActionSink):
         return payload
 
 
-    def find_by_van_id(self, van_id: str) -> Optional[dict]:
+    def find_by_van_id(self, van_id: str):
         """Find a person record by their VAN ID."""
         params = {
             "$expand": "phones,emails,addresses"
         }
-        endpoint = f"people/{van_id}?{urlencode(params)}"
-
         response = self.request_api(
             method="GET", 
-            request_data=None, 
-            endpoint=endpoint,
+            request_data=None,
+            endpoint=f"people/{van_id}?{urlencode(params)}",
+            validate_response=False
         )
-        return response.json() if response.ok else None
 
-    def find_by_email(self, email: str) -> Optional[dict]:
+        self.validate_response(response)
+
+        payload = self._clean_contact_response(response.json())
+
+        return payload
+
+
+    def _clean_contact_response(self, payload):
+        """
+        There are certain fields returned by EveryAction in GET requests, that will fail POST requests if included
+        """
+
+        if payload.get("emails"):
+            payload["emails"] = [
+                {
+                    "email": email.get("email"),
+                    "type": email.get("type"),
+                    "isPreferred": email.get("isPreferred")
+                }
+                for email in payload["emails"]
+            ]
+        return payload
+        
+
+    def find_by_email(self, email: str):
         """Find a person record by their email address."""
         response = self.request_api(
             method="POST", 
             request_data={"emails": [{"email": email}]}, 
-            endpoint="people/find"
+            endpoint="people/find",
+            validate_response=False
         )
-        return response.json() if response.ok else None
 
-    def _get_existing_record_by_van_id(self, van_id: str) -> Optional[dict]:
-        """Get existing record using VAN ID."""
-        response = self.find_by_van_id(van_id)
-        if response is None:
-            LOGGER.warning(f"Failed to fetch existing record for van_id {van_id}")
-        return response
-
-    def _get_existing_record_by_email(self, email: str) -> Optional[dict]:
-        """Get existing record using email address."""
-        email_response = self.find_by_email(email)
-        if email_response is None:
-            LOGGER.warning(f"Failed to fetch existing record for email {email}")
+        if response.status_code == 404 and 'Unmatched' in response.text:
+            # Person not found, return None
             return None
 
-        van_id = email_response.get("vanId")
+        self.validate_response(response)
+
+        # Find endpoint doesn't return all fields, so need to get record from vanID
+
+        van_id = response.json().get("vanId")
         if not van_id:
-            LOGGER.warning(f"No VAN ID found in email response for {email}")
-            return None
+            raise Exception(f"Unexpected response from find endpoint: {response.json()}")
+        
+        return self.find_by_van_id(van_id)
 
-        return self._get_existing_record_by_van_id(van_id)
-    
-    def _remove_unnecessary_fields(self, record: dict) -> dict:
-        """Remove unnecessary fields from the record."""
-        if "emails" in record:
-            record["emails"] = [
-                {
-                    "email": email.get("email"),
-                }
-                for email in record["emails"]
-            ]
-            
-        if "phones" in record:
-            record["phones"] = [
-                {
-                    "phoneNumber": phone.get("phoneNumber"),
-                    "phoneType": phone.get("phoneType") if phone.get("phoneType") in ["H", "W", "O"] else None,
-                }
-                for phone in record["phones"]
-            ]
-        return record
 
-    def merge_with_existing_people(self, record: dict) -> dict:
-        """Merge incoming record with existing person data if found."""
+    def find_existing_contact(self, record: dict):
+        """Find existing contact by VAN ID or email address."""
         van_id = record.get("vanId")
         email = record.get("emails", [])[0].get("email") if record.get("emails") else None
-        
-        if not email and not van_id:
-            LOGGER.debug("No email or van_id found in record, skipping merge logic")
-            return record
-
+    
         existing_record = None
         
         if van_id:
-            existing_record = self._get_existing_record_by_van_id(van_id)
-        else:
-            existing_record = self._get_existing_record_by_email(email)
+            existing_record = self.find_by_van_id(van_id)
+        elif email:
+            existing_record = self.find_by_email(email)
 
-        if existing_record is None:
-            LOGGER.debug("No existing record found, using incoming record as-is")
-            return record
+        return existing_record
+            
 
-        for key, value in record.items():
-                existing_value = existing_record.get(key)
-                if existing_value in [None, "", []]:
-                    existing_record[key] = value
-
-        merged_record = self._remove_unnecessary_fields(existing_record)
-        LOGGER.debug(f"Successfully merged record with existing data")
-        return merged_record
 
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = self.map_fields(record)
         
         if self.config.get("only_upsert_empty_fields", False):
-            return self.merge_with_existing_people(record)
+            existing_contact = self.find_existing_contact(record)
+            if existing_contact:
+                record["vanId"] = existing_contact["vanId"]
+
+                for key, _ in record.items():
+                    if existing_contact.get(key) not in [None, []]:
+                        record[key] = existing_contact.get(key)
         
         return record
     
@@ -205,7 +195,9 @@ class ContactsSink(EveryActionSink):
 
     def upsert_record(self, record: dict, context: dict):
         method = "POST"
-        state_dict = dict()
+        state_dict = {
+            "is_updated": record.get("vanId") is not None
+        }
 
         response = self.request_api(method, request_data=record, endpoint=self.endpoint)
         if response.status_code in [200, 201]:
