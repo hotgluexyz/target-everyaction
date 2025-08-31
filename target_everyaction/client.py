@@ -39,7 +39,7 @@ class EveryActionSink(HotglueSink):
                 msg = self.response_error_message(response)
             raise FatalAPIError(msg)
 
-    def request_api(self, method, request_data, endpoint):
+    def request_api(self, method, request_data, endpoint, validate_response=True):
         url = f"{self.base_url}{endpoint}"
         LOGGER.info(self.__auth)
         response = requests.request(
@@ -50,5 +50,6 @@ class EveryActionSink(HotglueSink):
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
         LOGGER.info(f"API Response: {response.status_code} - {response.text} - {response.request.headers}")
-        self.validate_response(response)
+        if validate_response:
+            self.validate_response(response)
         return response

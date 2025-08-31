@@ -3,6 +3,7 @@
 from typing import Optional
 from target_everyaction.client import EveryActionSink
 import singer
+from urllib.parse import urlencode
 
 LOGGER = singer.get_logger()
 
@@ -23,6 +24,7 @@ class ContactsSink(EveryActionSink):
             "salutation": record.get("salutation"),
             "dateOfBirth": record.get("birthdate"),
             "occupation": record.get("occupation"),
+            "vanId": record.get("id"),
         }
 
         if "email" in record:
@@ -68,9 +70,109 @@ class ContactsSink(EveryActionSink):
 
         return payload
 
-    def preprocess_record(self, record: dict, context: dict) -> dict:
-        return self.map_fields(record)
 
+    def find_by_van_id(self, van_id: str):
+        """Find a person record by their VAN ID."""
+        params = {
+            "$expand": "phones,emails,addresses"
+        }
+        response = self.request_api(
+            method="GET", 
+            request_data=None,
+            endpoint=f"people/{van_id}?{urlencode(params)}",
+            validate_response=False
+        )
+
+        self.validate_response(response)
+
+        payload = self._clean_contact_response(response.json())
+
+        return payload
+
+
+    def _clean_contact_response(self, payload):
+        """
+        There are certain fields returned by EveryAction in GET requests, that will fail POST requests if included
+        """
+
+        if payload.get("emails"):
+            payload["emails"] = [
+                # Throws error on subscription metadata fields
+                {
+                    "email": email.get("email"),
+                    "type": email.get("type"),
+                    "isPreferred": email.get("isPreferred")
+                }
+                for email in payload["emails"]
+            ]
+
+        if payload.get("phones"):
+            payload["phones"] = [
+                #Throws error on metadata fields
+                {
+                    "phoneNumber": phone.get("phoneNumber"),
+                }
+                for phone in payload["phones"]
+            ]
+        return payload
+        
+
+    def find_by_email(self, email: str):
+        """Find a person record by their email address."""
+        response = self.request_api(
+            method="POST", 
+            request_data={"emails": [{"email": email}]}, 
+            endpoint="people/find",
+            validate_response=False
+        )
+
+        if response.status_code == 404 and 'Unmatched' in response.text:
+            # Person not found, return None
+            return None
+
+        self.validate_response(response)
+
+        # Find endpoint doesn't return all fields, so need to get record from vanID
+
+        van_id = response.json().get("vanId")
+        if not van_id:
+            raise Exception(f"Unexpected response from find endpoint: {response.json()}")
+        
+        return self.find_by_van_id(van_id)
+
+
+    def find_existing_contact(self, record: dict):
+        """Find existing contact by VAN ID or email address."""
+        van_id = record.get("vanId")
+        email = record.get("emails", [])[0].get("email") if record.get("emails") else None
+    
+        existing_record = None
+        
+        if van_id:
+            existing_record = self.find_by_van_id(van_id)
+        elif email:
+            existing_record = self.find_by_email(email)
+
+        return existing_record
+            
+
+
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        record = self.map_fields(record)
+        
+        if self.config.get("only_upsert_empty_fields", False):
+            existing_contact = self.find_existing_contact(record)
+            if existing_contact:
+                record["vanId"] = existing_contact["vanId"]
+
+                for key, _ in record.items():
+                    if existing_contact.get(key) not in [None, []]:
+                        record[key] = existing_contact.get(key)
+        
+        return record
+    
+    
     def _get_or_create_code(self, code_payload: dict) -> Optional[str]:
         """Get existing code ID or create new code."""
         # Get existing codes
@@ -103,7 +205,9 @@ class ContactsSink(EveryActionSink):
 
     def upsert_record(self, record: dict, context: dict):
         method = "POST"
-        state_dict = dict()
+        state_dict = {
+            "is_updated": record.get("vanId") is not None
+        }
 
         response = self.request_api(method, request_data=record, endpoint=self.endpoint)
         if response.status_code in [200, 201]:
