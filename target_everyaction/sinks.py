@@ -53,7 +53,7 @@ class ContactsSink(EveryActionSink):
             for phone in record["phone_numbers"]:
                 phone_dict = {
                     "phoneNumber": phone.get("number"),
-                    "phoneType": phone.get("type") if phone.get("type") in ["H", "W", "O"] else None,
+                    "phoneType": phone.get("type"),
                 }
                 payload["phones"].append(phone_dict)
 
@@ -97,12 +97,22 @@ class ContactsSink(EveryActionSink):
 
         if payload.get("emails"):
             payload["emails"] = [
+                # Throws error on subscription metadata fields
                 {
                     "email": email.get("email"),
                     "type": email.get("type"),
                     "isPreferred": email.get("isPreferred")
                 }
                 for email in payload["emails"]
+            ]
+
+        if payload.get("phones"):
+            payload["phones"] = [
+                #Throws error on metadata fields
+                {
+                    "phoneNumber": phone.get("phoneNumber"),
+                }
+                for phone in payload["phones"]
             ]
         return payload
         
