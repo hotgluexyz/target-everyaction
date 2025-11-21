@@ -39,7 +39,7 @@ class EveryActionSink(HotglueSink):
                 msg = self.response_error_message(response)
             raise FatalAPIError(msg)
 
-    def request_api(self, method, request_data, endpoint):
+    def request_api(self, method, request_data=None, endpoint=""):
         url = f"{self.base_url}{endpoint}"
         LOGGER.info(self.__auth)
         response = requests.request(
