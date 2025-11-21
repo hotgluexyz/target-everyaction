@@ -83,7 +83,7 @@ class ContactsSink(EveryActionSink):
                     item["name"].lower(): item["codeId"] 
                     for item in data["items"]
                 })
-                if "nextPageLink" not in data:
+                if not data.get("nextPageLink"):
                     break
                 response = self.request_api("GET", 
                                           endpoint=f"codes?{data['nextPageLink'].split('?')[1]}")
