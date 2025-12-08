@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import singer
 from target_everyaction.auth import EveryActionAuth
 from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+import backoff
 
 LOGGER = singer.get_logger()
 
@@ -39,6 +40,13 @@ class EveryActionSink(HotglueSink):
                 msg = self.response_error_message(response)
             raise FatalAPIError(msg)
 
+    @backoff.on_exception(
+        backoff.expo,
+        (RetriableAPIError, requests.exceptions.ConnectionError, requests.exceptions.Timeout),
+        max_tries=7,
+        factor=2,
+        jitter=lambda x: backoff.full_jitter(x) + x // 2
+    )
     def request_api(self, method, request_data=None, endpoint=""):
         url = f"{self.base_url}{endpoint}"
         LOGGER.info(self.__auth)
