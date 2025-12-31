@@ -2,7 +2,7 @@
 
 from singer_sdk import typing as th
 from target_hotglue.target import TargetHotglue
-
+from hotglue_tap_sdk.helpers.capabilities import AlertingLevel
 from target_everyaction.sinks import ContactsSink
 
 
@@ -11,6 +11,7 @@ class TargetEveryAction(TargetHotglue):
 
     name = "target-everyaction"
     SINK_TYPES = [ContactsSink]
+    alerting_level = AlertingLevel.ERROR
 
     config_jsonschema = th.PropertiesList(
         th.Property("app_name", th.StringType, required=True),
