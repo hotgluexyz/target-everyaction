@@ -1,7 +1,7 @@
 """EveryAction target class."""
 
-from singer_sdk import typing as th
-from target_hotglue.target import TargetHotglue
+from hotglue_tap_sdk import typing as th
+from hotglue_tap_sdk.target_sdk.target import TargetHotglue
 from hotglue_tap_sdk.helpers.capabilities import AlertingLevel
 from target_everyaction.sinks import ContactsSink
 

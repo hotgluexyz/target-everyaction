@@ -1,12 +1,13 @@
-from target_hotglue.client import HotglueSink
+from hotglue_tap_sdk.target_sdk.client import HotglueSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 import requests
-from singer_sdk.plugin_base import PluginBase
+from hotglue_tap_sdk.plugin_base import PluginBase
 from typing import Dict, List, Optional
 import singer
 from target_everyaction.auth import EveryActionAuth
-from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+from hotglue_tap_sdk.exceptions import FatalAPIError, RetriableAPIError
 import backoff
+import json
 
 LOGGER = singer.get_logger()
 
