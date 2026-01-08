@@ -1,11 +1,13 @@
-from target_hotglue.client import HotglueSink
+from hotglue_singer_sdk.target_sdk.client import HotglueSink
+from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 import requests
-from singer_sdk.plugin_base import PluginBase
+from hotglue_singer_sdk.plugin_base import PluginBase
 from typing import Dict, List, Optional
 import singer
 from target_everyaction.auth import EveryActionAuth
-from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 import backoff
+import json
 
 LOGGER = singer.get_logger()
 
@@ -38,6 +40,17 @@ class EveryActionSink(HotglueSink):
                 msg = response.text
             except:
                 msg = self.response_error_message(response)
+
+            if response.status_code == 403:
+                raise InvalidCredentialsError(msg)
+            
+            if response.status_code == 400 and 'INVALID_PARAMETER' in msg:
+                try:
+                    error_data = json.loads(msg)
+                    error_message = error_data["errors"][0]["text"]
+                    raise InvalidPayloadError(error_message)
+                except:
+                    raise InvalidPayloadError(msg)
             raise FatalAPIError(msg)
 
     @backoff.on_exception(
