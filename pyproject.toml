@@ -8,8 +8,8 @@ license = "Apache 2.0"
 [tool.poetry.dependencies]
 python = "<3.11,>=3.7.1"
 requests = "^2.25.1"
-hotglue-singer-sdk = {git = "https://github.com/hotgluexyz/HotglueTapSDK", branch = "feature/hgi-9436"}
-hotglue-etl-exceptions = {git = "https://github.com/hotgluexyz/hotglue-etl-exceptions.git"}
+hotglue-singer-sdk = "1.0.0"
+hotglue-etl-exceptions = "0.1.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.5"
