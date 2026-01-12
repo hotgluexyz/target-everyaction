@@ -47,10 +47,10 @@ class EveryActionSink(HotglueSink):
             if response.status_code == 400 and 'INVALID_PARAMETER' in msg:
                 try:
                     error_data = json.loads(msg)
-                    error_message = error_data["errors"][0]["text"]
-                    raise InvalidPayloadError(error_message)
+                    msg = error_data["errors"][0]["text"]
                 except:
-                    raise InvalidPayloadError(msg)
+                    pass
+                raise InvalidPayloadError(msg)
             raise FatalAPIError(msg)
 
     @backoff.on_exception(
