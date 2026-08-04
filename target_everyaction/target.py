@@ -3,14 +3,14 @@
 from hotglue_singer_sdk import typing as th
 from hotglue_singer_sdk.target_sdk.target import TargetHotglue
 from hotglue_singer_sdk.helpers.capabilities import AlertingLevel
-from target_everyaction.sinks import ContactsSink
+from target_everyaction.sinks import ContactsSink, DisbursementsSink, PeopleSink
 
 
 class TargetEveryAction(TargetHotglue):
     """Target for EveryAction."""
 
     name = "target-everyaction"
-    SINK_TYPES = [ContactsSink]
+    SINK_TYPES = [ContactsSink, PeopleSink, DisbursementsSink]
     alerting_level = AlertingLevel.ERROR
 
     config_jsonschema = th.PropertiesList(
