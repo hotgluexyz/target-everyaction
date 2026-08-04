@@ -1,14 +1,78 @@
 """EveryAction target sink class, which handles writing streams."""
 
-from typing import Optional
-from target_everyaction.client import EveryActionSink
+from typing import Any, Dict, Optional
+
 import singer
+from hotglue_etl_exceptions import InvalidPayloadError
+
+from target_everyaction.client import EveryActionSink
 
 LOGGER = singer.get_logger()
 
+# Writable Person fields for POST /people/findOrCreate.
+# Mirrors tap people/contacts schemas; omits read-only summary expansions.
+_PERSON_WRITE_FIELDS = (
+    "vanId",
+    "firstName",
+    "middleName",
+    "lastName",
+    "suffix",
+    "title",
+    "contactMode",
+    "organizationContactCommonName",
+    "organizationContactOfficialName",
+    "salutation",
+    "formalSalutation",
+    "additionalSalutation",
+    "envelopeName",
+    "formalEnvelopeName",
+    "additionalEnvelopeName",
+    "contactMethodPreferenceCode",
+    "nickname",
+    "website",
+    "professionalSuffix",
+    "party",
+    "employer",
+    "occupation",
+    "jobTitle",
+    "sex",
+    "dateOfBirth",
+    "emails",
+    "phones",
+    "addresses",
+    "recordedAddresses",
+    "identifiers",
+    "codes",
+    "customFields",
+    "notes",
+    "customProperties",
+)
+
+
+def _drop_empty(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove keys whose values are None or empty containers."""
+    cleaned = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if value == "" or value == [] or value == {}:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def _nested_id(value: Any, *keys: str) -> Optional[Any]:
+    """Return the first present key from a nested object, or the scalar itself."""
+    if isinstance(value, dict):
+        for key in keys:
+            if value.get(key) is not None:
+                return value[key]
+        return None
+    return value
+
 
 class ContactsSink(EveryActionSink):
-    """EveryAction target sink class."""
+    """Unified Contacts sink (NewMode CRM mapping → findOrCreate)."""
 
     name = "Contacts"
     endpoint = "people/findOrCreate"
@@ -150,3 +214,116 @@ class ContactsSink(EveryActionSink):
 
         LOGGER.info(f"Upsert result: id={id}, success={state_dict['success']}")
         return id, response.ok, state_dict
+
+
+class PeopleSink(EveryActionSink):
+    """Payees / vendors (native EveryAction Person → POST /people/findOrCreate).
+
+    Accepts the same native field names as the tap ``people`` / ``contacts``
+    streams (firstName, emails, phones, addresses, employer, …).
+    """
+
+    name = "People"
+    endpoint = "people/findOrCreate"
+
+    def map_fields(self, record: dict) -> dict:
+        payload = {
+            field: record[field]
+            for field in _PERSON_WRITE_FIELDS
+            if field in record and record[field] is not None
+        }
+        return _drop_empty(payload)
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        return self.map_fields(record)
+
+    def upsert_record(self, record: dict, context: dict):
+        state_dict: Dict[str, Any] = {}
+        response = self.request_api("POST", request_data=record, endpoint=self.endpoint)
+        if response.status_code in [200, 201]:
+            state_dict["success"] = True
+            record_id = response.json().get("vanId")
+        else:
+            state_dict["success"] = False
+            record_id = None
+
+        LOGGER.info(f"People upsert result: id={record_id}, success={state_dict['success']}")
+        return record_id, response.ok, state_dict
+
+
+class DisbursementsSink(EveryActionSink):
+    """AP disbursements (POST /disbursements create-or-update).
+
+    Required: contact.vanId, designation.designationId, dateIssued, amount.
+    Also accepts flat ``vanId`` / ``designationId`` / ``date`` from the
+    ``recent_disbursements`` list shape.
+    """
+
+    name = "Disbursements"
+    endpoint = "disbursements"
+
+    def map_fields(self, record: dict) -> dict:
+        van_id = _nested_id(record.get("contact"), "vanId") or record.get("vanId")
+        designation_id = (
+            _nested_id(record.get("designation"), "designationId")
+            or record.get("designationId")
+        )
+        date_issued = record.get("dateIssued") or record.get("date")
+
+        if van_id is None:
+            raise InvalidPayloadError("Disbursement requires contact.vanId (or vanId)")
+        if designation_id is None:
+            raise InvalidPayloadError(
+                "Disbursement requires designation.designationId (or designationId)"
+            )
+        if not date_issued:
+            raise InvalidPayloadError("Disbursement requires dateIssued (or date)")
+        if record.get("amount") is None:
+            raise InvalidPayloadError("Disbursement requires amount")
+
+        payload: Dict[str, Any] = {
+            "contact": {"vanId": int(van_id)},
+            "designation": {"designationId": int(designation_id)},
+            "dateIssued": date_issued,
+            "amount": record.get("amount"),
+            "batchCode": record.get("batchCode"),
+            "checkDate": record.get("checkDate"),
+            "checkNumber": record.get("checkNumber"),
+            "note": record.get("note") or record.get("purpose"),
+            "codes": record.get("codes"),
+            "disclosureFieldValues": record.get("disclosureFieldValues"),
+            "linkedCreditCardPaymentDisbursementId": record.get(
+                "linkedCreditCardPaymentDisbursementId"
+            ),
+            "linkedReimbursementDisbursementId": record.get(
+                "linkedReimbursementDisbursementId"
+            ),
+        }
+
+        # Include id when updating an existing disbursement.
+        disbursement_id = record.get("disbursementId") or record.get(
+            "contactsDisbursementId"
+        )
+        if disbursement_id is not None:
+            payload["disbursementId"] = int(disbursement_id)
+
+        return _drop_empty(payload)
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        return self.map_fields(record)
+
+    def upsert_record(self, record: dict, context: dict):
+        state_dict: Dict[str, Any] = {}
+        response = self.request_api("POST", request_data=record, endpoint=self.endpoint)
+        if response.status_code in [200, 201]:
+            state_dict["success"] = True
+            body = response.json() if response.text else {}
+            record_id = body.get("disbursementId") if isinstance(body, dict) else body
+        else:
+            state_dict["success"] = False
+            record_id = None
+
+        LOGGER.info(
+            f"Disbursement upsert result: id={record_id}, success={state_dict['success']}"
+        )
+        return record_id, response.ok, state_dict
