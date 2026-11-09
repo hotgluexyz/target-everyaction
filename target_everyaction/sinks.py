@@ -12,6 +12,7 @@ class ContactsSink(EveryActionSink):
 
     name = "Contacts"
     endpoint = "people/findOrCreate"
+    _existing_codes = None
 
     def map_fields(self, record: dict) -> dict:
         payload = {
@@ -73,33 +74,35 @@ class ContactsSink(EveryActionSink):
 
     def _get_or_create_code(self, code_payload: dict) -> Optional[str]:
         """Get existing code ID or create new code."""
-        # Get existing codes
-        response = self.request_api("GET", endpoint="codes")
-        existing_codes = {}
-        while True:
-            if response.ok:
+        if self._existing_codes is None:
+            # Publish the cache only after every page has loaded successfully.
+            existing_codes = {}
+            endpoint = "codes"
+            while True:
+                response = self.request_api("GET", endpoint=endpoint)
                 data = response.json()
                 existing_codes.update({
-                    item["name"].lower(): item["codeId"] 
+                    (item["codeType"], item["name"].lower()): item["codeId"]
                     for item in data["items"]
                 })
                 if not data.get("nextPageLink"):
                     break
-                response = self.request_api("GET", 
-                                          endpoint=f"codes?{data['nextPageLink'].split('?')[1]}")
-            else:
-                break
+                endpoint = f"codes?{data['nextPageLink'].split('?', 1)[1]}"
+            self._existing_codes = existing_codes
 
         # Check for existing code
-        code_name = code_payload["name"].lower()
-        if code_name in existing_codes:
-            return existing_codes[code_name]
+        code_key = (code_payload["codeType"], code_payload["name"].lower())
+        if code_key in self._existing_codes:
+            return self._existing_codes[code_key]
 
         # Create new code
         response = self.request_api("POST", 
                                   endpoint="codes",
                                   request_data=code_payload)
-        return response.json() if response.ok else None
+        code_id = response.json() if response.ok else None
+        if code_id is not None:
+            self._existing_codes[code_key] = code_id
+        return code_id
 
     def upsert_record(self, record: dict, context: dict):
         method = "POST"
