@@ -10,7 +10,6 @@ import backoff
 import json
 import re
 import time
-from email.utils import parsedate_to_datetime
 
 LOGGER = singer.get_logger()
 
@@ -26,7 +25,6 @@ class EveryActionSink(HotglueSink):
         super().__init__(target, stream_name, schema, key_properties)
         self.__auth = EveryActionAuth(self.config["app_name"], self.config["api_key"])
         self._last_request_at = None
-        self._retry_after_until = 0
 
     @property
     def base_url(self):
@@ -35,19 +33,6 @@ class EveryActionSink(HotglueSink):
     def response_error_message(self, response: requests.Response) -> str:
         message = super().response_error_message(response)
         return re.sub(r"(/people/)\d+(?=/|$)", r"\1{personId}", message)
-
-    @staticmethod
-    def _retry_after_seconds(response: requests.Response) -> float:
-        value = response.headers.get("Retry-After")
-        if value is None:
-            return 0
-        try:
-            return max(0, int(value))
-        except ValueError:
-            try:
-                return max(0, parsedate_to_datetime(value).timestamp() - time.time())
-            except (TypeError, ValueError, OverflowError):
-                return 0
 
     def validate_response(self, response: requests.Response) -> None:
         """Validate HTTP response."""
@@ -87,12 +72,10 @@ class EveryActionSink(HotglueSink):
         # Conservative per-key limits: 2 requests/sec for matching, 5 for others.
         path = endpoint.split("?", 1)[0].strip("/")
         interval = 0.5 if path in ("people/find", "people/findOrCreate") else 0.2
-        next_request_at = self._retry_after_until
         if self._last_request_at is not None:
-            next_request_at = max(next_request_at, self._last_request_at + interval)
-        delay = next_request_at - time.monotonic()
-        if delay > 0:
-            time.sleep(delay)
+            delay = self._last_request_at + interval - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
         self._last_request_at = time.monotonic()
 
         response = requests.request(
@@ -110,9 +93,5 @@ class EveryActionSink(HotglueSink):
                 or key.lower().startswith(("ratelimit", "x-ratelimit", "x-rate-limit"))
             }
             LOGGER.warning("Rate limit response: %s - %s", response.text, timing_headers)
-            self._retry_after_until = max(
-                self._retry_after_until,
-                time.monotonic() + self._retry_after_seconds(response),
-            )
         self.validate_response(response)
         return response
