@@ -1,6 +1,7 @@
 """EveryAction target sink class, which handles writing streams."""
 
 from typing import Optional
+from urllib.parse import urlencode
 from target_everyaction.client import EveryActionSink
 import singer
 
@@ -75,25 +76,29 @@ class ContactsSink(EveryActionSink):
     def _get_or_create_code(self, code_payload: dict) -> Optional[str]:
         """Get existing code ID or create new code."""
         if self._existing_codes is None:
-            # Publish the cache only after every page has loaded successfully.
-            existing_codes = {}
-            endpoint = "codes"
-            while True:
-                response = self.request_api("GET", endpoint=endpoint)
-                data = response.json()
-                existing_codes.update({
-                    (item["codeType"], item["name"].lower()): item["codeId"]
-                    for item in data["items"]
-                })
-                if not data.get("nextPageLink"):
-                    break
-                endpoint = f"codes?{data['nextPageLink'].split('?', 1)[1]}"
-            self._existing_codes = existing_codes
+            self._existing_codes = {}
 
         # Check for existing code
         code_key = (code_payload["codeType"], code_payload["name"].lower())
         if code_key in self._existing_codes:
             return self._existing_codes[code_key]
+
+        query = urlencode({
+            "name": code_payload["name"],
+            "codeType": code_payload["codeType"],
+            "$top": 200,
+        })
+        endpoint = f"codes?{query}"
+        while True:
+            response = self.request_api("GET", endpoint=endpoint)
+            data = response.json()
+            for item in data["items"]:
+                if (item["codeType"], item["name"].lower()) == code_key:
+                    self._existing_codes[code_key] = item["codeId"]
+                    return item["codeId"]
+            if not data.get("nextPageLink"):
+                break
+            endpoint = f"codes?{data['nextPageLink'].split('?', 1)[1]}"
 
         # Create new code
         response = self.request_api("POST", 
